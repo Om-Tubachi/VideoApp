@@ -18,7 +18,8 @@ import { uploadOnCloudinary } from "../utils/cloudinary.js"
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { User } from "../models/user.model.js"
 import jwt from "jsonwebtoken"
-import { pipeline } from "stream";
+import { pipeline, pipeline, pipeline, pipeline } from "stream";
+import mongoose from "mongoose";
 
 async function generateAccessAndRefreshTokens(user) {
     // console.log(user);
@@ -291,6 +292,82 @@ const getUserSubscribersAndSubscribedTo = asyncHandler(
 
     }
 
+)
+
+const getWatchHistory = asyncHandler(
+    async (req, res, _) => {
+        const userId = req.user?._id
+        if (!userId) throw new ApiError(400, "User not found")
+
+        // we already have an array `watchHistory` which is populated with video ids beforehanded, we just have to do a succesfull lookup on every videoId of this array and project a full document for each videoId 
+        const pipeline = [
+            {
+                $match: {
+                    _id: new mongoose.Types.ObjectId(userId)        // if we dont do this, we end up searching for a string type id, whereas we have saved it as ObjectId(_id)
+                }
+            },
+            {
+                $lookup: {
+                    from: "videos",
+                    localField: "watchHistory",
+                    foreignField: "_id",
+                    as: "watchHistory"
+                },
+                // this sub-pipeline returns sanitised doc of every owner of corresponding video id
+                pipeline: [
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "owner",
+                            pipeline: [
+                                {
+                                    $project: {
+                                        username: 1,
+                                        fullName: 1,
+                                        avatar: 1,
+                                        coverImage: 1,
+                                        _id: 1
+                                    }
+                                }
+                            ]
+                        },
+                        // now sanitise the above owner, only include the necessary fields
+                        // $project: {
+                        //     username: 1,
+                        //     fullName: 1,
+                        //     avatar: 1,
+                        //     coverImage: 1,
+                        //     _id: 1
+                        // }
+                    },
+                    // now we have clean doc of every owner, only take the first element of every owner result, WHY? I DONT KNOW
+                    {
+                        $addFields: {
+                            owner: {
+                                $first: { $owner }
+                            }
+                        }
+                    }
+                ]
+            }
+        ]
+
+        if (!pipeline) throw new ApiError(401, "Failed to fetch watch history")
+
+        const watchHistory = User.aggregate(pipeline)
+
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(
+                    200,
+                    watchHistory[0].watchHistory, // WHY?
+                    "Watch History fetched succesfully"
+                )
+            )
+    }
 )
 export {
     registerUSer,
