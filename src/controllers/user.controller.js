@@ -3,13 +3,13 @@
 //     loginUser,                   DONE
 //     logoutUser,                  DONE
 //     refreshAccessToken,          DONE
-//     changeCurrentPassword,       DO
-//     getCurrentUser,              DO
-//     updateAccountDetails,        DO
-//     updateUserAvatar,            DO
-//     updateUserCoverImage,        DO
+//     changeCurrentPassword,       DONE
+//     getCurrentUser,              DONE
+//     updateAccountDetails,        DONE
+//     updateUserAvatar,            DONE
+//     updateUserCoverImage,        DONE
 //     getUserChannelProfile,       DONE
-//     getWatchHistory              DO
+//     getWatchHistory              DONE
 // }
 
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -20,6 +20,7 @@ import { User } from "../models/user.model.js"
 import jwt from "jsonwebtoken"
 import { pipeline, pipeline, pipeline, pipeline } from "stream";
 import mongoose from "mongoose";
+import bcrypt from "bcrypt"
 
 async function generateAccessAndRefreshTokens(user) {
     // console.log(user);
@@ -28,7 +29,6 @@ async function generateAccessAndRefreshTokens(user) {
     const refreshToken = await user.generateRefreshToken(user)
     return { accessToken, refreshToken }
 }
-
 
 const registerUSer = asyncHandler(async (req, res, next) => {
     // res.status(200).json({message:"Ok niqqa"})
@@ -294,6 +294,7 @@ const getUserSubscribersAndSubscribedTo = asyncHandler(
 
 )
 
+
 const getWatchHistory = asyncHandler(
     async (req, res, _) => {
         const userId = req.user?._id
@@ -369,10 +370,193 @@ const getWatchHistory = asyncHandler(
             )
     }
 )
+
+
+const updateUserAvatar = asyncHandler(
+    async (req, res, _, _) => {
+        // get the localAvatarFilePath from  req.files?.avatar[0]?.path;
+        // if you do not find localAvatarFilePath, return as it is mandatory
+        // upload this new file on cloudinary and get the url
+        // change old avatar url pf user and save
+
+        const localAvatarFilePath = req.files?.avatar[0]?.path;
+        if (!localAvatarFilePath) throw new ApiError(408, "Avatar image is mandatory, it cannot be empty")
+
+        const cloudinaryUrl = await uploadOnCloudinary(localAvatarFilePath)
+
+        if (!cloudinaryUrl) throw new ApiError(200, "upload failed on cloudinary")
+
+        const id = req.user?._id
+
+        if (!id) throw new ApiError(409, "User not found")
+
+        await User.findOneAndUpdate(
+            {
+                id
+            },
+            {
+                $set: {
+                    avatar: cloudinaryUrl
+                }
+            },
+        )
+
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(200, {}, "Avatar updated succesfully")
+            )
+    }
+)
+
+
+const updateUserCoverImage = asyncHandler(
+    async (req, res, _, _) => {
+        // get the localAvatarFilePath from  req.files?.avatar[0]?.path;
+        // if you do not find localAvatarFilePath, return as it is mandatory
+        // upload this new file on cloudinary and get the url
+        // change old avatar url pf user and save
+
+        let coverImageLocalPath;
+        if (req.files && Array.isArray(req.files.coverImage) && req.files.coverImage.length > 0) {
+            coverImageLocalPath = req.files.coverImage[0].path
+        }
+
+        const cloudinaryUrl = await uploadOnCloudinary(coverImageLocalPath)
+
+        if (!cloudinaryUrl) throw new ApiError(200, "upload failed on cloudinary")
+
+        const id = req.user?._id
+
+        if (!id) throw new ApiError(409, "User not found")
+
+        await User.findOneAndUpdate(
+            {
+                id
+            },
+            {
+                $set: {
+                    cvrImg: cloudinaryUrl || ""
+                }
+            },
+        )
+
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(200, {}, "Cover image updated succesfully")
+            )
+    }
+)
+
+
+const updateAccountDetails = asyncHandler(
+    async (req, res, _, _) => {
+        // get : username , fullname , email , password FROM: req body
+        // (avatar and coverImage handled by multer)
+        // return if any of the fields is empty
+        // update all user details
+        // save the document
+        // return success message with new user details as res
+
+        const userId = req.user?._id
+        if (!userId) throw new ApiError(409, "User is not logged in because we did not find an associated user id")
+
+        const { username: newUsernname, fullname: newFullname, email: newEmail, password: newPassword } = req.body
+
+        if ([newUsernname, newFullname, newEmail, newPassword].some((field) => field?.trim() === "")) throw new ApiError(409, "All fields are manadatory")
+
+        const localAvatarFilePath = req.files?.avatar[0]?.path;
+
+        if (!localAvatarFilePath) throw new ApiError(400, "You must upload an avatar")
+
+        let coverImageLocalPath;
+        if (req.files && Array.isArray(req.files.coverImage) && req.files.coverImage.length > 0) {
+            coverImageLocalPath = req.files.coverImage[0].path
+        }
+        const avatar = await uploadOnCloudinary(localAvatarFilePath);
+        const cvrImg = await uploadOnCloudinary(coverImageLocalPath)
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10)
+        const updatedUser = await User.findByIdAndUpdate(userId, {
+            username: newUsernname,
+            email: newEmail,
+            fullName: newFullname,
+            password: hashedPassword,
+            avatar: avatar.url,
+            cvrImg: cvrImg?.url || ""
+        },
+            {
+                new: true
+            }
+        ).select(
+            "-password -refreshToken"
+        )
+
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(200, updatedUser, "User details updated succesfully")
+            )
+    }
+)
+
+
+const getCurrentUser = asyncHandler(
+    async (req, res, _, _) => {
+        const currUserId = req.user?._id
+
+        if (!currUserId) throw new ApiError(400, "Please login before accessing your account")
+        const username = req.user?.username
+        const user = await User.findOne({
+            $or: [{ currUserId }, { username }]
+        }).select(
+            "-password -refreshToken"
+        )
+
+        if (!user) throw new ApiError(409, "User not found")
+
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(200, user, "Current user fetched succesfully")
+            )
+    }
+)
+
+
+const changeCurrentPassword = asyncHandler(
+    async (req, res, _, _) => {
+        const { newPassword } = req.body
+        if (!newPassword) throw new ApiError(408, "A new password is required")
+        const userId = req.user?._id;
+        if (!userId) throw new ApiError(409, "User has to be authenitcated to change current password")
+
+        // const hashedPassword = await bcrypt.hash(newPassword , 10)
+        const user = await User.findOne(userId)
+        user.password = hashedPassword
+        await user.save({ validateBeforeSave: false })
+
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(200, {}, "Password changed succesfully")
+            )
+
+    }
+)
+
+
 export {
     registerUSer,
     loginUser,
     logOutUser,
     refreshAccessToken,
-    getUserSubscribersAndSubscribedTo
+    getUserSubscribersAndSubscribedTo,
+    getWatchHistory,
+    changeCurrentPassword,
+    getCurrentUser,
+    updateUserAvatar,
+    updateAccountDetails,
+    updateUserCoverImage
 }
