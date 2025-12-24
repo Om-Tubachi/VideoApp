@@ -1,4 +1,4 @@
-import mongoose, { isValidObjectId } from "mongoose"
+import mongoose, { isValidObjectId, Types } from "mongoose"
 import { Video } from "../models/video.model.js"
 import { User } from "../models/user.model.js"
 import { ApiError } from "../utils/ApiError.js"
@@ -28,10 +28,10 @@ const publishAVideo = asyncHandler(async (req, res) => {
 
     console.log(typeof req.body.title);
     const { title, description } = req.body
-    
+
     if ([title, description].some((field) => field?.trim() === ""))
         throw new ApiError(409, "Title or description cannot be empty")
-    
+
     const localVideoPath = req.files?.videoFile[0]?.path
     const localThumbnailPath = req.files?.thumbnail[0]?.path
 
@@ -44,8 +44,8 @@ const publishAVideo = asyncHandler(async (req, res) => {
     if (!vidCloudinaryUrl)
         throw new ApiError(500, "Failed to upload video")
     if (!thumbnailCloudinaryUrl)
-        throw new ApiError(500, "Failed to upload thumbnail")    
-    
+        throw new ApiError(500, "Failed to upload thumbnail")
+
     const duration = vidCloudinaryUrl.duration
     const video = await Video.create({
         videoFile: vidCloudinaryUrl.url,
@@ -62,18 +62,114 @@ const publishAVideo = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Failed to upload video in database")
 
     return res
-    .status(200)
-    .json(
-        new ApiResponse(200 , video , "Video uploaded succesfully")
-    )
+        .status(200)
+        .json(
+            new ApiResponse(200, video, "Video uploaded succesfully")
+        )
 })
 
 const getVideoById = asyncHandler(async (req, res) => {
     const { videoId } = req.params
+    if (!videoId)
+        throw new ApiError(400, "Video ID is required")
     //TODO: get video by id
     // views are increemented here
     // handled views increment by adding a pre hook in the Video model
 
+    // get the actual video which can be played
+    // what we will easily get with above is: TITLE, DESCR , TIME SINCE UPLOADED , OWNER , VIEWS
+    // what we have to fetch: `followers` of owner , `likes` of current video , is logged in user subscribed to profile he is viewing
+    await Video.findByIdAndUpdate(videoId, { $inc: { views: 1 } });
+
+    const pipeline = [
+        {
+            $match: {
+                _id: new mongoose.Types.ObjectId(videoId)
+            }
+        },
+        {
+            $lookup: {
+                from: "users",
+                localField: "owner",
+                foreignField: "_id",
+                as: "owner",
+                pipeline: [
+                    {
+                        $project: {
+                            username: 1,
+                            avatar: 1,
+                            _id: 1,
+                        }
+                    },
+                    {
+                        $lookup: {
+                            from: "subscriptions",
+                            localField: "_id",
+                            foreignField: "channel",
+                            as: "subscribers"
+                        }
+                    },
+                    {
+                        $addFields: {
+                            subscribersCount: {
+                                $size: "$subscribers"
+                            },
+                            isSubscribed: {
+                                $cond: {
+                                    if: {
+                                        $in: [new mongoose.Types.ObjectId(req.user?._id), "$subscribers.subscriber"]
+                                    },
+                                    then: true,
+                                    else: false
+                                }
+                            }
+                        }
+                    },
+                    {
+                        $unwind: "$owner"  // Converts owner from [{}] to {}
+                    },
+                    {
+                        $project: {
+                            username: 1,
+                            avatar: 1,
+                            _id: 1,
+                            subscribersCount: 1,
+                            isSubscribed: 1,
+                            subscribers: 1
+                        }
+                    }
+                ]
+            },
+
+        },
+        {
+            $project: {
+                title: 1,
+                description: 1,
+                views: 1,
+                createdAt: 1,
+                owner: 1,
+                videoFile: 1,
+                thumbnail: 1,
+                duration: 1,
+
+            }
+        }
+    ]
+
+    if (!pipeline)
+        throw new ApiError(404, "Syntax error while i was making pipeline")
+
+    const video = await Video.aggregate(pipeline)
+
+    if (!video)
+        throw new ApiError(409, "Failed to fetch the video")
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(200, video[0], "Video fetched succesfully")
+        )
     
 })
 
@@ -90,13 +186,28 @@ const deleteVideo = asyncHandler(async (req, res) => {
 
 const togglePublishStatus = asyncHandler(async (req, res) => {
     const { videoId } = req.params
+    if(!videoId)
+        throw new ApiError(400, "Video ID is required")
+    
+    const video = await Video.findById(videoId)
+    if(!video)
+        throw new ApiError(404, "Video not found")
+
+    video.isPublished = !video.isPublished
+    await video.save()
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(200, video, `Video ${video.isPublished ? "published" : "unpublished"} successfully`)
+        )
 })
 
 export {
     getAllVideos,
-    publishAVideo,
-    getVideoById,
+    publishAVideo,          // DONE
+    getVideoById,           // DONE
     updateVideo,
     deleteVideo,
-    togglePublishStatus
+    togglePublishStatus     // DONE
 }
