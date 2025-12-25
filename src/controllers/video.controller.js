@@ -5,11 +5,72 @@ import { ApiError } from "../utils/ApiError.js"
 import { ApiResponse } from "../utils/ApiResponse.js"
 import { asyncHandler } from "../utils/asyncHandler.js"
 import { uploadOnCloudinary } from "../utils/cloudinary.js"
-
+import Fuse from "fuse.js"
 
 const getAllVideos = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query
+    let { page = 1, limit = 10, query, sortBy, sortType, userId } = req.query
+    page = parseInt(page), limit = parseInt(limit), sortType = parseInt(sortType)
     //TODO: get all videos based on query, sort, pagination
+
+    // I will be using fuse.js fo rfuzzy finding
+    // since my application is small scale, i will do some dumb shit
+
+    // first get all video documents
+    // then sort by views and duration
+    // sortBy will be a string: "views" || "duration" , depending on these , sort using sortType: 1 or -1
+    // now apply pagination
+
+    const allVideos = await Video.find({})
+
+    const options = {
+        includeScore: true,
+        keys: ['title']
+    }
+    const fuse = new Fuse(allVideos, options)
+    const result = fuse.search(query)
+
+    if (!result)
+        throw new ApiError(409, "Failed to fuzzy find")
+    if (sortBy === "views") {
+        result.sort(
+            function (a, b) {
+                return sortType === 1 ? a.item.views - b.item.views : b.item.views - a.item.views
+            }
+        )
+    }
+    if (sortBy === "duration") {
+        result.sort(
+            function (a, b) {
+                return sortType === 1 ? a.item.duration - b.item.duration : b.item.duration - a.item.duration
+            }
+        )
+    }
+
+    const paginatedResults = {}
+    let startIndex = (page - 1) * limit, endIndex = startIndex + limit
+
+    paginatedResults.results = result.slice(startIndex, endIndex)
+
+    if (startIndex > 0) {
+        paginatedResults.prev = {
+            page: page - 1,
+            limit: limit
+        }
+    }
+    if (endIndex < result.length) {
+        paginatedResults.next = {
+            page: page + 1,
+            limit: limit
+        }
+    }
+
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(200, paginatedResults, "Fetched videos succesfully")
+        )
+
 })
 
 const publishAVideo = asyncHandler(async (req, res) => {
@@ -170,27 +231,80 @@ const getVideoById = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, video[0], "Video fetched succesfully")
         )
-    
+
 })
 
 const updateVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params
     //TODO: update video details like title, description, thumbnail
 
+    // get : title , descr , thumbnail 
+    // make sure all fields are there
+    // update those fields
+    // return the updated doc
+
+    const { title: newTitle, description: newDescription, thumbnail } = req.body
+
+    if ([newTitle, newDescription].some((field) => field?.trim() === ""))
+        throw new ApiError(408, "Title or Description cannot be empty")
+
+    const localThumbnailPath = req.file?.thumbnail[0]?.path
+
+    if (!localThumbnailPath)
+        throw new ApiError(409, "Thumbnail is required")
+
+    const cloudinaryThumbnail = await uploadOnCloudinary(localThumbnailPath)
+
+    if (!cloudinaryThumbnail)
+        throw new ApiError(409, "Failed to upload video")
+
+    const updatedVideo = await Video.findByIdAndUpdate(
+        videoId,
+        {
+            $set: {
+                title: newTitle,
+                description: newDescription,
+                thumbnail: cloudinaryThumbnail?.url
+            }
+        },
+        {
+            new: true
+        }
+    )
+
+    if (!updatedVideo)
+        throw new ApiError(409, "Failed to update video in database")
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(200, updatedVideo, "Updated video details succesfully")
+        )
 })
 
 const deleteVideo = asyncHandler(async (req, res) => {
     const { videoId } = req.params
     //TODO: delete video
+
+    if (!videoId)
+        throw new ApiError(409, "Video does not exist")
+
+    await Video.findByIdAndDelete(videoId)
+
+    return res
+        .status(200)
+        .json(
+            new ApiResponse(200, {}, "Video deleted succesfully")
+        )
 })
 
 const togglePublishStatus = asyncHandler(async (req, res) => {
     const { videoId } = req.params
-    if(!videoId)
+    if (!videoId)
         throw new ApiError(400, "Video ID is required")
-    
+
     const video = await Video.findById(videoId)
-    if(!video)
+    if (!video)
         throw new ApiError(404, "Video not found")
 
     video.isPublished = !video.isPublished
@@ -204,10 +318,10 @@ const togglePublishStatus = asyncHandler(async (req, res) => {
 })
 
 export {
-    getAllVideos,
+    getAllVideos,           // DONE
     publishAVideo,          // DONE
     getVideoById,           // DONE
-    updateVideo,
-    deleteVideo,
+    updateVideo,            // DONE
+    deleteVideo,            // DONE
     togglePublishStatus     // DONE
 }
