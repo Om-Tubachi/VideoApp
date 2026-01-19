@@ -39,11 +39,11 @@ const getUserPlaylists = asyncHandler(async (req, res) => {
         throw new ApiError(409, "Invalid playlist id or the playlist does not exist")
 
     const playlists = await Playlist.find({
-        owner: userId
+        owner: new mongoose.Types.ObjectId(userId)
     })
 
-    if (!playlists.length)
-        throw new ApiResponse(409, {}, "No playlists of user found")
+    if (playlists.length === 0)
+        throw new ApiResponse(200, {}, "No playlists made by the user")
 
     return res
         .status(200)
@@ -55,7 +55,6 @@ const getUserPlaylists = asyncHandler(async (req, res) => {
 const getPlaylistById = asyncHandler(async (req, res) => {
     const { playlistId } = req.params
     //TODO: get playlist by id
-
     // a very interesting pipeline will be written here
 
     // STEPS:
@@ -77,39 +76,51 @@ const getPlaylistById = asyncHandler(async (req, res) => {
                 from: "videos",
                 localField: "videos",
                 foreignField: "_id",
-                as: "videos"
-            },
-            pipeline: [
-                // now lookup the username from `owner` field and add username, fullname, avatar
-                {
-                    $lookup: {
-                        from: "users",
-                        localField: "owner",
-                        foreignField: "_id",
-                        as: "channelInfo"
-                    },
-                    pipeline: [
-                        {
-                            $project: {
-                                username: 1,
-                                avatar: 1,
-                                fullName: 1
-                            }
+                as: "videos",
+                pipeline: [
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "owner",
+                            foreignField: "_id",
+                            as: "channelInfo"
                         }
-                    ]
-                }
-            ]
+                    },
+                    {
+                        $unwind: "$channelInfo"
+                    },
+                    {
+                        $addFields: {
+                            username: "$channelInfo.username",
+                            avatar: "$channelInfo.avatar",
+                            fullName: "$channelInfo.fullName"
+                        }
+                    },
+                    {
+                        $project: {
+                            thumbnail: 1,
+                            title: 1,
+                            videoFile: 1,
+                            views: 1,
+                            createdAt: 1,
+                            updatedAt: 1,
+                            username: 1,
+                            avatar: 1,
+                            fullName: 1
+                        }
+                    }
+                ]
+            }
         },
         {
             $project: {
                 _id: 1,
-                thumbnail: 1,
-                title: 1,
-                videoUrl: 1,
-                views: 1,
+                name: 1,
+                description: 1,
+                videos: 1,
+                owner: 1,
                 createdAt: 1,
-                updatedAt: 1,
-                channelInfo: 1
+                updatedAt: 1
             }
         }
     ]
@@ -136,7 +147,8 @@ const addVideoToPlaylist = asyncHandler(async (req, res) => {
         playlistId,
         {
             $addToSet: { videos: new mongoose.Types.ObjectId(videoId) }
-        }
+        },
+        { new: true }
     )
 
     if (!addToPlayList)
@@ -163,6 +175,9 @@ const removeVideoFromPlaylist = asyncHandler(async (req, res) => {
             $pull: {
                 videos: new mongoose.Types.ObjectId(videoId)
             }
+        },
+        {
+            new:true
         }
     )
 
@@ -179,36 +194,42 @@ const removeVideoFromPlaylist = asyncHandler(async (req, res) => {
 const deletePlaylist = asyncHandler(async (req, res) => {
     const { playlistId } = req.params
     // TODO: delete playlist
-    if (!playlistId || !isValidObjectId(playlistId))
-        throw new ApiError(409, "Invalid playlist id or the playlist does not exist")
+    if (!playlistId || !isValidObjectId(playlistId)) {
+        throw new ApiError(400, "Invalid playlist id");
+    }
 
-    const deletedPlaylist = await Playlist.findByIdAndDelete(playlistId)
+    const playlist = await Playlist.findById(playlistId);
 
-    if (!deletedPlaylist)
-        throw new ApiError(409, "Failed to delete video from playlist")
+    if (!playlist) {
+        throw new ApiError(404, "Playlist does not exist");
+    }
 
-    return res
-        .status(200)
-        .json(
-            new ApiResponse(200, deletedPlaylist, "playlist fetched succesfully")
-        )
+    if (playlist.owner.toString() !== req.user._id.toString()) {
+        throw new ApiError(403, "You are not authorized to delete this playlist");
+    }
 
+    const deletedPlaylist = await Playlist.findByIdAndDelete(playlistId);
+
+    return res.status(200).json(
+        new ApiResponse(200, deletedPlaylist, "Playlist deleted successfully")
+    );
 })
 
 const updatePlaylist = asyncHandler(async (req, res) => {
     const { playlistId } = req.params
     const { name, description } = req.body
     //TODO: update playlist
-    if (!isValidObjectId(playlistId) || !isValidObjectId(videoId))
+    
+    if (!isValidObjectId(playlistId) || !isValidObjectId(playlistId))
         throw new ApiError(409, "Invalid playlist id or invalid video id")
 
     if (!name)
         throw new ApiError(409, "Missing name or description")
 
     const updatedPlaylist = await Playlist.findByIdAndUpdate(playlistId, {
-        name:name,
-        description:description || ""
-    })
+        name: name,
+        description: description || ""
+    },{new:true})
 
     if (!updatedPlaylist)
         throw new ApiError(409, "Failed to update playlist")

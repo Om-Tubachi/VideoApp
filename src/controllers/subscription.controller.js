@@ -14,41 +14,47 @@ const toggleSubscription = asyncHandler(async (req, res) => {
         throw new ApiError(409, "Invalid channel id or the channel does not exist")
 
     const userId = req.user?._id
+    console.log(userId + " \t" + channelId);
+
     const existingSubscription = await Subscription.find(
         {
-            channel: channelId,
-            subscriber: userId
+            $and: [
+                { channel: new mongoose.Types.ObjectId(channelId) },
+                { subscriber: new mongoose.Types.ObjectId(userId) }
+            ]
         }
     )
-
-    if (!existingSubscription) {
+    // console.log(existingSubscription);
+    
+    if (existingSubscription.length === 0) {
         const newSubscriber = await Subscription.create({
             subscriber: userId,
             channel: channelId
         })
-        
+
         if (!newSubscriber)
             throw new ApiError(409, "Failed to subscribe to the given channel")
 
         return res
-        .status(200)
-        .json(
-            new ApiResponse(200 , newSubscriber , "Subscribed succesfully")
-        )
+            .status(200)
+            .json(
+                new ApiResponse(200, newSubscriber, "Subscribed succesfully")
+            )
 
 
     }
     else {
-        const unSubscribed = await Subscription.findByIdAndDelete(existingSubscription._id)
+        const unSubscribed = await Subscription.findByIdAndDelete(existingSubscription[0]._id)
+        console.log(existingSubscription);
 
         if (!unSubscribed)
             throw new ApiError(409, "Failed to un-subscribe to the given channel")
 
         return res
-        .status(200)
-        .json(
-            new ApiResponse(200 , unSubscribed , "Un-Subscribed succesfully")
-        )
+            .status(200)
+            .json(
+                new ApiResponse(200, unSubscribed, "Un-Subscribed succesfully")
+            )
     }
 })
 
@@ -65,7 +71,7 @@ const getUserChannelSubscribers = asyncHandler(async (req, res) => {
     const pipeline = [
         {
             $match: {
-                channel: mongoose.Types.ObjectId(channelId)
+                channel: new mongoose.Types.ObjectId(channelId)
             }
         },
         {
@@ -122,7 +128,7 @@ const getSubscribedChannels = asyncHandler(async (req, res) => {
     const pipeline = [
         {
             $match: {
-                subscriber: mongoose.Types.ObjectId(subscriberId)
+                subscriber: new mongoose.Types.ObjectId(subscriberId)
             }
         },
         {

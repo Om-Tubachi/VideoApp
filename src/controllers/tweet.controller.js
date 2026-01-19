@@ -42,25 +42,22 @@ const getUserTweets = asyncHandler(async (req, res) => {
             $lookup: {
                 from: "users",
                 localField: "owner",
-                foreignFiel: "_id",
+                foreignField: "_id",
                 as: "owner"
             }
         },
         {
-            $project: {
-                username: 1,
-                fullName: 1,
-                avatar: 1
-            }
+            $unwind: "$owner"  // Convert owner array to object
         },
         {
             $project: {
                 _id: 1,
                 content: 1,
-                username: 1,
-                fullName: 1,
-                avatar: 1,
                 createdAt: 1,
+                updatedAt: 1,
+                username: "$owner.username",
+                fullName: "$owner.fullName",
+                avatar: "$owner.avatar"
             }
         }
     ]
@@ -86,10 +83,10 @@ const updateTweet = asyncHandler(async (req, res) => {
     if (!isValidObjectId(tweetId))
         throw new ApiError(409, "Invalid tweet id")
 
-    if (!content.length())
+    if (!content.length)
         throw new ApiError(409, "Tweet cannot be empty")
 
-    const updatedTweet = await Comment.findByIdAndUpdate(
+    const updatedTweet = await Tweet.findByIdAndUpdate(
         tweetId,
         {
             $set: {
@@ -116,7 +113,7 @@ const deleteTweet = asyncHandler(async (req, res) => {
     if (!tweetId || !isValidObjectId(tweetId))
         throw new ApiError(409, "Invalid tweet id or the tweet doesnt exist")
 
-    const deleted = await Comment.findByIdAndDelete(tweetId)
+    const deleted = await Tweet.findByIdAndDelete(tweetId)
 
     if (!deleted)
         throw new ApiError(409, "tweet doent exist or faile dto delete from databse")
