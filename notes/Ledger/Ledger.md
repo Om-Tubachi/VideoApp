@@ -27,3 +27,11 @@
   A small nested lookup into the users collection to get the username of the channel , because in videos we only have it as: `owner:Schema.Types.ObjectId -> User`, so took this and got the username from users collection
 
 ---
+---
+## Completed basic testing, all routes work as expected
+- **Date:** 2026-1-19
+
+- **Description:** 
+  Only made sure the routes are working as expected in postman, next up: documentation and deployment
+
+---
